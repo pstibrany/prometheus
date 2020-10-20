@@ -18,7 +18,6 @@ import (
 	"fmt"
 	"hash/crc32"
 	"io/ioutil"
-	"math/rand"
 	"os"
 	"path/filepath"
 	"sort"
@@ -366,15 +365,17 @@ func TestPersistence_index_e2e(t *testing.T) {
 
 	var input indexWriterSeriesSlice
 
+	ref := uint64(0)
 	// Generate ChunkMetas for every label set.
 	for i, lset := range lbls {
 		var metas []chunks.Meta
 
 		for j := 0; j <= (i % 20); j++ {
+			ref++
 			metas = append(metas, chunks.Meta{
 				MinTime: int64(j * 10000),
 				MaxTime: int64((j + 1) * 10000),
-				Ref:     rand.Uint64(),
+				Ref:     ref,
 				Chunk:   chunkenc.NewXORChunk(),
 			})
 		}
@@ -559,4 +560,28 @@ func TestSymbols(t *testing.T) {
 		i++
 	}
 	require.NoError(t, iter.Err())
+}
+
+func TestChunksOrdering(t *testing.T) {
+	dir, err := ioutil.TempDir("", "index")
+	testutil.Ok(t, err)
+	defer func() {
+		testutil.Ok(t, os.RemoveAll(dir))
+	}()
+
+	idx, err := NewWriter(context.Background(), filepath.Join(dir, "index"))
+	testutil.Ok(t, err)
+
+	testutil.Ok(t, idx.AddSymbol("1"))
+	testutil.Ok(t, idx.AddSymbol("2"))
+	testutil.Ok(t, idx.AddSymbol("__name__"))
+
+	c50 := chunks.Meta{Ref: 50}
+	c100 := chunks.Meta{Ref: 100}
+	c200 := chunks.Meta{Ref: 200}
+
+	testutil.Ok(t, idx.AddSeries(1, labels.FromStrings("__name__", "1"), c100))
+	testutil.NotOk(t, idx.AddSeries(2, labels.FromStrings("__name__", "2"), c50))
+	testutil.Ok(t, idx.AddSeries(2, labels.FromStrings("__name__", "2"), c200))
+	testutil.Ok(t, idx.Close())
 }
