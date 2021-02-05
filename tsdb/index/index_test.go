@@ -562,26 +562,58 @@ func TestSymbols(t *testing.T) {
 	require.NoError(t, iter.Err())
 }
 
-func TestChunksOrdering(t *testing.T) {
+func TestChunksRefOrdering(t *testing.T) {
 	dir, err := ioutil.TempDir("", "index")
-	testutil.Ok(t, err)
+	require.NoError(t, err)
 	defer func() {
-		testutil.Ok(t, os.RemoveAll(dir))
+		require.NoError(t, os.RemoveAll(dir))
 	}()
 
 	idx, err := NewWriter(context.Background(), filepath.Join(dir, "index"))
-	testutil.Ok(t, err)
+	require.NoError(t, err)
 
-	testutil.Ok(t, idx.AddSymbol("1"))
-	testutil.Ok(t, idx.AddSymbol("2"))
-	testutil.Ok(t, idx.AddSymbol("__name__"))
+	require.NoError(t, idx.AddSymbol("1"))
+	require.NoError(t, idx.AddSymbol("2"))
+	require.NoError(t, idx.AddSymbol("__name__"))
 
 	c50 := chunks.Meta{Ref: 50}
 	c100 := chunks.Meta{Ref: 100}
 	c200 := chunks.Meta{Ref: 200}
 
-	testutil.Ok(t, idx.AddSeries(1, labels.FromStrings("__name__", "1"), c100))
-	testutil.NotOk(t, idx.AddSeries(2, labels.FromStrings("__name__", "2"), c50))
-	testutil.Ok(t, idx.AddSeries(2, labels.FromStrings("__name__", "2"), c200))
-	testutil.Ok(t, idx.Close())
+	require.NoError(t, idx.AddSeries(1, labels.FromStrings("__name__", "1"), c100))
+	require.EqualError(t, idx.AddSeries(2, labels.FromStrings("__name__", "2"), c50), "unsorted chunk reference: 50, previous: 100")
+	require.NoError(t, idx.AddSeries(2, labels.FromStrings("__name__", "2"), c200))
+	require.NoError(t, idx.Close())
+}
+
+func TestChunksTimeOrdering(t *testing.T) {
+	dir, err := ioutil.TempDir("", "index")
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, os.RemoveAll(dir))
+	}()
+
+	idx, err := NewWriter(context.Background(), filepath.Join(dir, "index"))
+	require.NoError(t, err)
+
+	require.NoError(t, idx.AddSymbol("1"))
+	require.NoError(t, idx.AddSymbol("2"))
+	require.NoError(t, idx.AddSymbol("__name__"))
+
+	require.NoError(t, idx.AddSeries(1, labels.FromStrings("__name__", "1"),
+		chunks.Meta{Ref: 1, MinTime: 0, MaxTime: 10}, // Also checks that first chunk can have MinTime: 0.
+		chunks.Meta{Ref: 2, MinTime: 11, MaxTime: 20},
+		chunks.Meta{Ref: 3, MinTime: 21, MaxTime: 30},
+	))
+
+	require.EqualError(t, idx.AddSeries(1, labels.FromStrings("__name__", "2"),
+		chunks.Meta{Ref: 10, MinTime: 0, MaxTime: 10},
+		chunks.Meta{Ref: 20, MinTime: 10, MaxTime: 20},
+	), "chunk minT 10 is not higher than previous chunk maxT 10")
+
+	require.EqualError(t, idx.AddSeries(1, labels.FromStrings("__name__", "2"),
+		chunks.Meta{Ref: 10, MinTime: 100, MaxTime: 30},
+	), "chunk maxT 30 is less than minT 100")
+
+	require.NoError(t, idx.Close())
 }

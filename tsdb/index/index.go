@@ -141,8 +141,10 @@ type Writer struct {
 	labelNames   map[string]uint64     // Label names, and their usage.
 
 	// Hold last series to validate that clients insert new series in order.
-	lastSeries   labels.Labels
-	lastRef      uint64
+	lastSeries    labels.Labels
+	lastSeriesRef uint64
+
+	// Hold last added chunk reference to make sure that chunks are ordered properly.
 	lastChunkRef uint64
 
 	crc32 hash.Hash
@@ -422,16 +424,25 @@ func (w *Writer) AddSeries(ref uint64, lset labels.Labels, chunks ...chunks.Meta
 		return errors.Errorf("out-of-order series added with label set %q", lset)
 	}
 
-	if ref < w.lastRef && len(w.lastSeries) != 0 {
+	if ref < w.lastSeriesRef && len(w.lastSeries) != 0 {
 		return errors.Errorf("series with reference greater than %d already added", ref)
 	}
 
 	lastChunkRef := w.lastChunkRef
-	for _, c := range chunks {
+	lastMaxT := int64(0)
+	for ix, c := range chunks {
 		if c.Ref < lastChunkRef {
-			return errors.Errorf("unsorted chunk reference: %d", ref)
+			return errors.Errorf("unsorted chunk reference: %d, previous: %d", c.Ref, lastChunkRef)
 		}
 		lastChunkRef = c.Ref
+
+		if ix > 0 && c.MinTime <= lastMaxT {
+			return errors.Errorf("chunk minT %d is not higher than previous chunk maxT %d", c.MinTime, lastMaxT)
+		}
+		if c.MaxTime < c.MinTime {
+			return errors.Errorf("chunk maxT %d is less than minT %d", c.MaxTime, c.MinTime)
+		}
+		lastMaxT = c.MaxTime
 	}
 
 	// We add padding to 16 bytes to increase the addressable space we get through 4 byte
@@ -505,7 +516,7 @@ func (w *Writer) AddSeries(ref uint64, lset labels.Labels, chunks ...chunks.Meta
 	}
 
 	w.lastSeries = append(w.lastSeries[:0], lset...)
-	w.lastRef = ref
+	w.lastSeriesRef = ref
 	w.lastChunkRef = lastChunkRef
 
 	return nil
