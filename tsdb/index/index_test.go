@@ -374,7 +374,7 @@ func TestPersistence_index_e2e(t *testing.T) {
 			ref++
 			metas = append(metas, chunks.Meta{
 				MinTime: int64(j * 10000),
-				MaxTime: int64((j + 1) * 10000),
+				MaxTime: int64((j+1)*10000) - 1,
 				Ref:     ref,
 				Chunk:   chunkenc.NewXORChunk(),
 			})
